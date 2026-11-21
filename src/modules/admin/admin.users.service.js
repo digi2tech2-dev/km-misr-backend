@@ -76,7 +76,7 @@ const listUsers = async ({
     const normalizedSortBy = USER_LIST_SORT_FIELDS.has(requestedSortBy) ? requestedSortBy : 'createdAt';
     const normalizedSortOrder = String(sortOrder || '').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
 
-    const filter = { deletedAt: null, verified: true };
+    const filter = { deletedAt: null, ...(status === 'REJECTED' ? {} : { verified: true }) };
     if (debtors === true) filter.walletBalance = { $lt: 0 };
     if (status) filter.status = status;
     if (verified != null) filter.verified = verified;
@@ -167,7 +167,7 @@ const updateUser = async (id, data, adminId) => {
     const user = await _findOrFail(id);
     const before = user.toObject();
 
-    const { name, email, groupId, status, verified, isApiEnabled } = data;
+    const { name, email, groupId, status, verified, isApiEnabled, referralEnabled } = data;
 
     if (name !== undefined) user.name = name.trim();
     if (status !== undefined) {
@@ -182,6 +182,7 @@ const updateUser = async (id, data, adminId) => {
     }
     if (verified !== undefined) user.verified = verified;
     if (isApiEnabled !== undefined) user.isApiEnabled = Boolean(isApiEnabled);
+    if (referralEnabled !== undefined) user.referralEnabled = Boolean(referralEnabled);
     if (groupId !== undefined) user.groupId = groupId;
 
     if (email !== undefined && email !== user.email) {

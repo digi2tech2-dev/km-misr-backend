@@ -137,6 +137,24 @@ const targetOrderSchema = new mongoose.Schema(
             trim: true,
             maxlength: [2048, 'screenshotProof path cannot exceed 2048 characters'],
         },
+        payoutProof: {
+            type: String,
+            trim: true,
+            maxlength: [2048, 'payoutProof path cannot exceed 2048 characters'],
+            default: null,
+        },
+        payoutAmount: {
+            type: Number,
+            min: [0, 'payoutAmount cannot be negative'],
+            default: null,
+        },
+        payoutCurrency: {
+            type: String,
+            trim: true,
+            uppercase: true,
+            maxlength: [3, 'payoutCurrency cannot exceed 3 characters'],
+            default: null,
+        },
         totalPrice: {
             type: Number,
             required: [true, 'totalPrice is required'],

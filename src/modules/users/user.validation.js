@@ -43,7 +43,7 @@ const updateMyProfileValidation = [
     body('phone')
         .optional()
         .trim()
-        .isLength({ max: 30 }),
+        .matches(/^\+[1-9]\d{7,14}$/).withMessage('Phone number must include a valid international country code'),
 
     body('username')
         .optional()

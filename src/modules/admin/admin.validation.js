@@ -75,6 +75,7 @@ const updateUserSchema = Joi.object({
     status: Joi.string().valid('PENDING', 'ACTIVE', 'REJECTED'),
     verified: Joi.boolean(),
     isApiEnabled: Joi.boolean(),
+    referralEnabled: Joi.boolean(),
     creditLimit: Joi.number().min(0).messages({
         'number.min': 'Credit limit cannot be negative',
     }),
@@ -344,6 +345,7 @@ const listOrdersQuery = Joi.object({
     status: Joi.string().valid('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELED', 'PARTIAL', 'MANUAL_REVIEW'),
     userId: objectId(),
     providerId: objectId(),
+    providerCode: Joi.string().trim().max(100),
     search: Joi.string().allow('', null).optional(), // <--- البطل اللي هينقذ الموقف
     from: Joi.date().iso(),
     to: Joi.date().iso().min(Joi.ref('from')),

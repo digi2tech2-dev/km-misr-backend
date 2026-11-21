@@ -83,7 +83,8 @@ const authorize = require('../../shared/middlewares/authorize');
 const requirePermission = require('../../shared/middlewares/requirePermission');
 const catchAsync = require('../../shared/utils/catchAsync');
 const { sendSuccess, sendPaginated } = require('../../shared/utils/apiResponse');
-const { createUpload } = require('../../shared/middlewares/upload');
+const { createUpload, validateUploadedFileSignature } = require('../../shared/middlewares/upload');
+const fs = require('fs/promises');
 const { walletLimiter } = require('../../shared/middlewares/rateLimiter');
 const { BusinessRuleError } = require('../../shared/errors/AppError');
 
@@ -91,6 +92,7 @@ const { validateBody, validateQuery, schemas } = require('./admin.validation');
 
 const avatarUpload = createUpload('avatars');
 const targetAppUpload = createUpload('target-apps');
+const targetPayoutUpload = createUpload('target-payout-proofs');
 const referralPayoutReceiptUpload = createUpload('referral-payout-receipts');
 
 // ── Controllers ───────────────────────────────────────────────────────────────
@@ -358,6 +360,11 @@ router.delete('/providers/:id', adminOnly, requirePermission('MANAGE_SUPPLIERS')
 // ORDERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+router.get('/orders/providers', requirePermission('MANAGE_ORDERS'), catchAsync(async (req, res) => {
+    const { Provider } = require('../providers/provider.model');
+    const providers = await Provider.find({ deletedAt: null }).select('name slug').sort({ name: 1 }).lean();
+    sendSuccess(res, { providers }, 'Order providers retrieved.');
+}));
 router.get('/orders', requirePermission('MANAGE_ORDERS'), resolveUserNumber('userId', 'query'), validateQuery(schemas.listOrdersQuery), ordersCtrl.listOrders);
 router.post('/orders/:id/retry', requirePermission('CONFIRM_ORDERS'), ordersCtrl.retryOrder);
 router.post('/orders/:id/refund', requirePermission('CONFIRM_ORDERS'), ordersCtrl.refundOrder);
@@ -651,7 +658,7 @@ router.get('/targets', requirePermission('MANAGE_TARGETS'), targetValidation.val
     });
 }));
 
-router.patch('/targets/:id/approve', requirePermission('CONFIRM_TARGET_REQUESTS'), catchAsync(async (req, res) => {
+router.patch('/targets/:id/approve', requirePermission('CONFIRM_TARGET_REQUESTS'), targetPayoutUpload.single('payoutProof'), catchAsync(async (req, res) => {
     const auditContext = req.auditContext ?? {
         actorId: req.user._id,
         actorRole: String(req.user.role || '').toUpperCase(),
@@ -659,12 +666,31 @@ router.patch('/targets/:id/approve', requirePermission('CONFIRM_TARGET_REQUESTS'
         userAgent: req.get('User-Agent') ?? null,
     };
 
-    const order = await targetSvc.approveTargetOrder(
-        req.params.id,
-        req.user._id,
-        auditContext
-    );
-    sendSuccess(res, order, 'Target order approved.');
+    if (req.file) {
+        try {
+            await validateUploadedFileSignature(req.file, {
+                code: 'TARGET_PAYOUT_PROOF_INVALID',
+                message: 'Payout proof image is invalid.',
+            });
+        } catch (error) {
+            await fs.unlink(req.file.path).catch(() => null);
+            throw error;
+        }
+    }
+
+    try {
+        const payoutProof = req.file ? `uploads/target-payout-proofs/${req.file.filename}` : null;
+        const order = await targetSvc.approveTargetOrder(
+            req.params.id,
+            req.user._id,
+            auditContext,
+            payoutProof
+        );
+        sendSuccess(res, order, 'Target order approved.');
+    } catch (error) {
+        if (req.file?.path) await fs.unlink(req.file.path).catch(() => null);
+        throw error;
+    }
 }));
 
 router.patch('/targets/:id/reject', requirePermission('CONFIRM_TARGET_REQUESTS'), targetValidation.validateBody(targetValidation.schemas.rejectTargetOrder), catchAsync(async (req, res) => {

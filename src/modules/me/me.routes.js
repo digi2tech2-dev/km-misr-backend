@@ -89,6 +89,11 @@ router.put(
 router.get('/wallet', me.getWallet);
 router.get('/wallet/transactions', me.getTransactions);
 
+router.use(['/referrals', '/referral-commissions', '/referral-payouts', '/referral-payout-methods'], (req, res, next) => {
+    if (!req.user.referralEnabled) return res.status(403).json({ success: false, message: 'Referral access is not enabled.' });
+    return next();
+});
+
 router.get('/referrals/dashboard', catchAsync(async (req, res) => {
     const dashboard = await referralDashboardService.getCustomerReferralDashboard(req.user._id, {
         limit: req.query.limit,

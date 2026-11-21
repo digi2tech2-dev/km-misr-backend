@@ -31,9 +31,9 @@ const registerValidation = [
         .isLength({ min: 2, max: 2 }).withMessage('Country code must be 2 characters'),
 
     body('phone')
-        .optional()
         .trim()
-        .isLength({ max: 30 }),
+        .notEmpty().withMessage('Phone number is required')
+        .matches(/^\+[1-9]\d{7,14}$/).withMessage('Phone number must include a valid international country code'),
 
     body('username')
         .optional()
@@ -56,6 +56,26 @@ const loginValidation = [
 
     body('password')
         .notEmpty().withMessage('Password is required'),
+];
+
+const requestPasswordResetValidation = [
+    body('email')
+        .trim()
+        .notEmpty().withMessage('Email is required')
+        .isEmail().withMessage('Please provide a valid email address')
+        .normalizeEmail(),
+];
+
+const resetPasswordValidation = [
+    body('token')
+        .trim()
+        .notEmpty().withMessage('Reset token is required')
+        .isLength({ min: 32, max: 256 }).withMessage('Reset token is invalid'),
+    body('password')
+        .notEmpty().withMessage('Password is required')
+        .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+        .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+        .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
 ];
 
 // ─── 2FA Validation ───────────────────────────────────────────────────────────
@@ -100,6 +120,11 @@ const completeGoogleProfileValidation = [
         .trim()
         .notEmpty().withMessage('Currency is required')
         .isLength({ min: 3, max: 3 }).withMessage('Currency code must be 3 characters'),
+
+    body('phone')
+        .trim()
+        .notEmpty().withMessage('Phone number is required')
+        .matches(/^\+[1-9]\d{7,14}$/).withMessage('Phone number must include a valid international country code'),
 ];
 
 const nativeGoogleValidation = [
@@ -122,6 +147,8 @@ const nativeGoogleValidation = [
 module.exports = {
     registerValidation,
     loginValidation,
+    requestPasswordResetValidation,
+    resetPasswordValidation,
     enable2FAValidation,
     disable2FAValidation,
     verify2FAValidation,

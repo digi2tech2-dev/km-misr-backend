@@ -13,19 +13,10 @@ const getMyProfile = catchAsync(async (req, res) => {
 
 const updateMyProfile = catchAsync(async (req, res) => {
     const { name, email, phone, username, password, country, currency, referralCode, refCode, ref, inviteCode } = req.body;
-    const user = await userService.updateMyProfile(req.user._id, {
-        name,
-        email,
-        phone,
-        username,
-        password,
-        country,
-        currency,
-        referralCode,
-        refCode,
-        ref,
-        inviteCode,
-    });
+    const profile = req.profileCompletionOnly
+        ? { phone, country, currency }
+        : { name, email, phone, username, password, country, currency, referralCode, refCode, ref, inviteCode };
+    const user = await userService.updateMyProfile(req.user._id, profile);
     sendSuccess(res, user, 'Profile updated successfully.');
 });
 

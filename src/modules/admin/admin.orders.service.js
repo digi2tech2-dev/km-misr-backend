@@ -40,6 +40,7 @@ const listOrders = async ({
     status,
     userId,
     providerId,
+    providerCode,
     search,
     from,
     to,
@@ -53,6 +54,7 @@ const listOrders = async ({
     const queryFilter = {};
     if (status) queryFilter.status = status;
     if (userId) queryFilter.userId = new mongoose.Types.ObjectId(userId);
+    if (providerCode) queryFilter.providerCode = String(providerCode).trim().toLowerCase();
     if (from || to) {
         queryFilter.createdAt = {};
         if (from) queryFilter.createdAt.$gte = new Date(from);

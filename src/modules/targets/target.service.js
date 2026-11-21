@@ -160,6 +160,12 @@ const assertPaymentMethodAllowed = async (app, { paymentMethod, paymentMethodId 
 
 const toMoney = (value) => Number(Number(value).toFixed(2));
 
+const isSiteWalletTargetOrder = (order = {}) => {
+    if (String(order.paymentMethodTypeSnapshot || '').trim().toLowerCase() === 'site_wallet') return true;
+    return [order.paymentMethodIdSnapshot, order.paymentMethodNameSnapshot, order.paymentMethod]
+        .some((value) => paymentTokenVariants(value).some((token) => ['site wallet', 'wallet'].includes(token)));
+};
+
 const normalizeIdempotencyKey = (value) => {
     const normalized = String(value || '').trim();
     if (!normalized) return null;
@@ -436,7 +442,7 @@ const createTargetOrder = async ({
 
     try {
         whatsappService.sendAdminNotification(
-            `🎯 *طلب تارجت جديد!*\nالمستخدم: ${user.name || user.email || userId}\nالتطبيق: ${app.name}\nالكمية: ${coinAmount}`
+            `🎯 *طلب بيع تارجت جديد!*\nالمستخدم: ${user.name || user.email || userId}\nالتطبيق: ${app.name}\nالكمية: ${coinAmount} دولار\nصافي المستحق: ${totalPrice} EGP\nطريقة الاستلام: ${resolvedPaymentMethod.name}\nمراجعة الطلبات: /admin/target-requests`
         ).catch((err) => {
             console.error('WhatsApp Notification failed:', err.message);
         });
@@ -447,40 +453,88 @@ const createTargetOrder = async ({
     return order;
 };
 
-const approveTargetOrder = async (orderId, adminId, auditContext = null) => {
-    const existing = await TargetOrder.findById(orderId);
-    if (!existing) throw new NotFoundError('TargetOrder');
+const approveTargetOrder = async (orderId, adminId, auditContext = null, payoutProof = null) => {
+    const session = await TargetOrder.startSession();
+    let existing;
+    let updated;
+    let payoutAmount = null;
+    let payoutCurrency = null;
 
-    if (existing.status === TARGET_ORDER_STATUS.APPROVED) {
-        throw new BusinessRuleError(
-            'This target order has already been approved.',
-            'TARGET_ORDER_ALREADY_APPROVED'
-        );
-    }
-    if (existing.status === TARGET_ORDER_STATUS.REJECTED) {
-        throw new BusinessRuleError(
-            'A rejected target order cannot be approved. The customer must submit a new one.',
-            'TARGET_ORDER_ALREADY_REJECTED'
-        );
-    }
+    try {
+        await session.withTransaction(async () => {
+            existing = await TargetOrder.findById(orderId).session(session);
+            if (!existing) throw new NotFoundError('TargetOrder');
 
-    const updated = await TargetOrder.findOneAndUpdate(
-        { _id: orderId, status: TARGET_ORDER_STATUS.PENDING },
-        {
-            $set: {
+            if (existing.status === TARGET_ORDER_STATUS.APPROVED) {
+                throw new BusinessRuleError('This target order has already been approved.', 'TARGET_ORDER_ALREADY_APPROVED');
+            }
+            if (existing.status === TARGET_ORDER_STATUS.REJECTED) {
+                throw new BusinessRuleError('A rejected target order cannot be approved. The customer must submit a new one.', 'TARGET_ORDER_ALREADY_REJECTED');
+            }
+
+            const walletPayout = isSiteWalletTargetOrder(existing);
+            if (!walletPayout && !String(payoutProof || '').trim()) {
+                throw new BusinessRuleError('Attach the payout receipt before approving an external payout.', 'TARGET_PAYOUT_PROOF_REQUIRED');
+            }
+
+            const fields = {
                 status: TARGET_ORDER_STATUS.APPROVED,
                 reviewedBy: adminId,
                 reviewedAt: new Date(),
-            },
-        },
-        { new: true }
-    );
+            };
 
-    if (!updated) {
-        throw new BusinessRuleError(
-            'This target order has already been reviewed.',
-            'TARGET_ORDER_ALREADY_REVIEWED'
-        );
+            if (walletPayout) {
+                const user = await User.findById(existing.userId).select('currency').session(session);
+                if (!user) throw new NotFoundError('User');
+                payoutCurrency = String(user.currency || 'USD').toUpperCase();
+                payoutAmount = Number(existing.totalPrice || 0);
+
+                if (payoutCurrency !== 'EGP') {
+                    const { getConversionRate } = require('../../services/currencyConverter.service');
+                    const [egpRate, userRate] = await Promise.all([
+                        getConversionRate('EGP'),
+                        getConversionRate(payoutCurrency),
+                    ]);
+                    payoutAmount = Number(((payoutAmount / egpRate) * userRate).toFixed(2));
+                }
+                if (payoutAmount <= 0) {
+                    throw new BusinessRuleError('The target payout amount must be greater than zero.', 'INVALID_TARGET_PAYOUT_AMOUNT');
+                }
+
+                fields.payoutAmount = payoutAmount;
+                fields.payoutCurrency = payoutCurrency;
+                fields.payoutProof = null;
+            } else {
+                fields.payoutProof = String(payoutProof).trim();
+                fields.payoutAmount = existing.totalPrice;
+                fields.payoutCurrency = 'EGP';
+            }
+
+            updated = await TargetOrder.findOneAndUpdate(
+                { _id: orderId, status: TARGET_ORDER_STATUS.PENDING },
+                { $set: fields },
+                { new: true, session }
+            );
+
+            if (!updated) {
+                throw new BusinessRuleError('This target order has already been reviewed.', 'TARGET_ORDER_ALREADY_REVIEWED');
+            }
+
+            if (walletPayout) {
+                const { creditWalletDirect } = require('../wallet/wallet.service');
+                await creditWalletDirect({
+                    userId: updated.userId,
+                    amount: payoutAmount,
+                    sourceType: 'TARGET_ORDER',
+                    sourceId: updated._id,
+                    sourceKey: `target-order:${updated._id}:payout`,
+                    description: `Target sale payout #${updated._id.toString().slice(-6)} (${existing.totalPrice} EGP)`,
+                    session,
+                });
+            }
+        });
+    } finally {
+        await session.endSession();
     }
 
     createAuditLog({
@@ -496,6 +550,9 @@ const approveTargetOrder = async (orderId, adminId, auditContext = null) => {
             coinAmount: updated.coinAmount,
             totalPrice: updated.totalPrice,
             unitPriceSnapshot: updated.unitPriceSnapshot,
+            payoutAmount: updated.payoutAmount,
+            payoutCurrency: updated.payoutCurrency,
+            payoutMethod: isSiteWalletTargetOrder(existing) ? 'SITE_WALLET' : 'EXTERNAL',
             reviewedBy: adminId.toString(),
         },
         ipAddress: auditContext?.ipAddress ?? null,

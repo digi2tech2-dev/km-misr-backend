@@ -157,7 +157,7 @@ Implemented routes are in `src/modules/auth/auth.routes.js`.
 - Google OAuth: enabled only when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set. Google users are found/linked by `googleId` or email, are marked verified, and new Google users are created as `ACTIVE`.
 - 2FA: email OTP only. Routes support generate, enable, disable, and verify. The code imports `speakeasy`, but the implemented 2FA flow does not use TOTP secrets.
 - Account states: `PENDING`, `ACTIVE`, `REJECTED` exist. Authenticated middleware only allows `ACTIVE`. Registration currently creates `ACTIVE` users, despite older comments mentioning approval-first registration.
-- Password reset: admin reset exists at `/api/admin/users/:id/reset-password`; no public forgot-password/reset flow is implemented.
+- Password reset: `POST /api/auth/forgot-password` emails a one-hour, single-use reset link; `POST /api/auth/reset-password` consumes it and updates the password. Admin reset also exists at `/api/admin/users/:id/reset-password`.
 - Logout: no server-side logout endpoint or token blacklist is implemented.
 - Rate limits: general API limiter is 1000 requests per 15 minutes per IP; auth limiter is 10 requests per 15 minutes; wallet mutation limiter is 20 per 15 minutes.
 

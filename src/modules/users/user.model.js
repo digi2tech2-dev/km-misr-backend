@@ -71,6 +71,16 @@ const userSchema = new mongoose.Schema(
             match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address'],
         },
 
+        phone: {
+            type: String,
+            trim: true,
+            default: null,
+            maxlength: [16, 'Phone number cannot exceed 16 characters'],
+            match: [/^\+[1-9]\d{7,14}$/, 'Phone number must use international format, for example +201012345678'],
+        },
+
+        referralEnabled: { type: Boolean, default: false },
+
         referralCode: {
             type: String,
             unique: true,
@@ -213,6 +223,18 @@ const userSchema = new mongoose.Schema(
 
         /** Token expires 24 hours after issuance. */
         emailVerificationExpires: {
+            type: Date,
+            select: false,
+            default: null,
+        },
+
+        passwordResetToken: {
+            type: String,
+            select: false,
+            default: null,
+        },
+
+        passwordResetExpires: {
             type: Date,
             select: false,
             default: null,
@@ -496,10 +518,12 @@ userSchema.virtual('missingProfileFields').get(function () {
     const missing = [];
     if (!this.country) missing.push('country');
     if (!this.currency) missing.push('currency');
+    if (!this.phone) missing.push('phone');
     return missing;
 });
 
 userSchema.virtual('isProfileComplete').get(function () {
+    if (!/^\+[1-9]\d{7,14}$/.test(String(this.phone || '').trim())) return false;
     if (this.profileCompletedAt) return true;
     if (!this.googleId) return true;
 
@@ -509,7 +533,9 @@ userSchema.virtual('isProfileComplete').get(function () {
 });
 
 userSchema.virtual('profileCompletionRequired').get(function () {
-    return Boolean(this.googleId && !this.isProfileComplete);
+    const customerPhoneMissing = this.role === ROLES.CUSTOMER
+        && !/^\+[1-9]\d{7,14}$/.test(String(this.phone || '').trim());
+    return Boolean(customerPhoneMissing || (this.googleId && !this.isProfileComplete));
 });
 
 // ─── Pre-save Hook: Hash Password ────────────────────────────────────────────

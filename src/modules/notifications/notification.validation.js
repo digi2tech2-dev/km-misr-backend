@@ -78,6 +78,7 @@ const adminSendNotificationSchema = Joi.object({
         'any.invalid': 'groupId must be a valid ObjectId',
     }),
     broadcast: Joi.boolean().optional().default(false),
+    allCustomers: Joi.boolean().optional().default(false),
     title: Joi.string().trim().min(1).max(200).required().messages({
         'string.empty': 'title is required',
         'string.max': 'title cannot exceed 200 characters',
@@ -94,14 +95,14 @@ const adminSendNotificationSchema = Joi.object({
     link: Joi.string().trim().max(500).optional().allow('', null),
 }).custom((value, helpers) => {
     // Ensure at least one target is specified
-    const { userId, groupId, broadcast } = value;
-    if (!userId && !groupId && !broadcast) {
+    const { userId, groupId, broadcast, allCustomers } = value;
+    if (!userId && !groupId && !broadcast && !allCustomers) {
         return helpers.error('any.custom', {
             message: 'You must specify a userId, groupId, or set broadcast to true.',
         });
     }
     // Ensure only one target mode is used
-    const targets = [!!userId, !!groupId, !!broadcast].filter(Boolean);
+    const targets = [!!userId, !!groupId, !!broadcast, !!allCustomers].filter(Boolean);
     if (targets.length > 1) {
         return helpers.error('any.custom', {
             message: 'Specify only ONE of: userId, groupId, or broadcast.',

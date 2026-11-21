@@ -8,6 +8,8 @@
  *   POST   /api/auth/login               – email/password login
  *   GET    /api/auth/verify-email        – consume email verification token
  *   POST   /api/auth/resend-verification – re-send verification email
+ *   POST   /api/auth/forgot-password     – email a password reset link
+ *   POST   /api/auth/reset-password      – consume reset token and update password
  *   GET    /api/auth/google              – redirect to Google login (handled by passport)
  *   GET    /api/auth/google/callback     – Google callback
  */
@@ -85,6 +87,16 @@ const resendVerification = catchAsync(async (req, res) => {
     sendSuccess(res, null, result.message);
 });
 
+const requestPasswordReset = catchAsync(async (req, res) => {
+    const result = await authService.requestPasswordReset(req.body.email);
+    sendSuccess(res, null, result.message);
+});
+
+const resetPassword = catchAsync(async (req, res) => {
+    const result = await authService.resetPassword(req.body);
+    sendSuccess(res, null, result.message);
+});
+
 const refresh = (_req, res) => {
     return res.status(401).json({
         success: false,
@@ -102,6 +114,10 @@ const refresh = (_req, res) => {
  * req.user is set by the Passport strategy.
  */
 const googleCallback = catchAsync(async (req, res) => {
+    if (req.user.status === 'REJECTED') {
+        const frontendBase = config.frontend.verifyRedirectUrl.replace(/\/email-verified.*$/, '').replace(/\/+$/, '');
+        return res.redirect(`${frontendBase}/auth?status=rejected`);
+    }
     const result = await authService.loginWithGoogle(req.user);
 
     // Derive the FE base URL from the configured verify-redirect URL
@@ -109,10 +125,21 @@ const googleCallback = catchAsync(async (req, res) => {
         .replace(/\/email-verified.*$/, '')   // strip path, keep origin
         .replace(/\/+$/, '');                  // strip trailing slashes
 
+    if (result.requires2FA) {
+        const params = new URLSearchParams({
+            status: 'TWO_FACTOR_REQUIRED',
+            tempToken: result.tempToken,
+            email: result.email || '',
+        });
+        return res.redirect(`${frontendBase}/auth?${params.toString()}`);
+    }
+
     if (result.status === 'PROFILE_COMPLETION_REQUIRED') {
         const params = new URLSearchParams({
             status: 'PROFILE_COMPLETION_REQUIRED',
             completionToken: result.completionToken,
+            country: result.user?.country || '',
+            currency: result.user?.currency || '',
         });
         return res.redirect(`${frontendBase}/auth?${params.toString()}`);
     }
@@ -128,8 +155,8 @@ const googleCallback = catchAsync(async (req, res) => {
 });
 
 const completeGoogleProfile = catchAsync(async (req, res) => {
-    const { completionToken, country, currency } = req.body;
-    const result = await authService.completeGoogleProfile({ completionToken, country, currency });
+    const { completionToken, country, currency, phone } = req.body;
+    const result = await authService.completeGoogleProfile({ completionToken, country, currency, phone });
     sendSuccess(res, result, 'Profile completed successfully.');
 });
 
@@ -190,6 +217,8 @@ module.exports = {
     refresh,
     verifyEmail,
     resendVerification,
+    requestPasswordReset,
+    resetPassword,
     googleCallback,
     completeGoogleProfile,
     nativeGoogleLogin,

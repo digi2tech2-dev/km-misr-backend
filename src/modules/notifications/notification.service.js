@@ -261,10 +261,13 @@ const notifyDepositRejected = (deposit, adminNotes = null) => {
  * @param {Object} order - TargetOrder document
  */
 const notifyTargetApproved = (order) => {
+    const payoutMessage = order.payoutAmount != null
+        ? ` Payout: ${order.payoutAmount} ${order.payoutCurrency || 'EGP'}.`
+        : '';
     return notifyUser({
         userId: order.userId?._id ?? order.userId,
         title: 'Target Order Approved ✅',
-        message: `Your target coin purchase of ${order.coinAmount} coins has been approved.`,
+        message: `Your target sale of ${order.coinAmount} coins has been approved.${payoutMessage}`,
         type: NOTIFICATION_TYPE.SUCCESS,
         source: 'TARGET',
     });
@@ -500,11 +503,30 @@ const adminSendNotification = async ({
     userId = null,
     groupId = null,
     broadcast = false,
+    allCustomers = false,
     title,
     message,
     type = NOTIFICATION_TYPE.INFO,
     link = null,
 }) => {
+    if (allCustomers) {
+        const cursor = User.find({ role: 'CUSTOMER', deletedAt: null }).select('_id').lean().cursor();
+        let batch = [];
+        let sent = 0;
+        for await (const user of cursor) {
+            batch.push({ userId: user._id, title, message, type, scope: NOTIFICATION_SCOPE.USER, link, source: 'ADMIN_ANNOUNCEMENT' });
+            if (batch.length >= 500) {
+                await Notification.insertMany(batch);
+                sent += batch.length;
+                batch = [];
+            }
+        }
+        if (batch.length) {
+            await Notification.insertMany(batch);
+            sent += batch.length;
+        }
+        return { sent, mode: 'allCustomers' };
+    }
     // ── Broadcast ────────────────────────────────────────────────────────────
     if (broadcast) {
         const notification = await Notification.create({

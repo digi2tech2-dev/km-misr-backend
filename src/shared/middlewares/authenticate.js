@@ -2,7 +2,7 @@
 
 const jwt = require('jsonwebtoken');
 const config = require('../../config/config');
-const { AuthenticationError } = require('../errors/AppError');
+const { AppError, AuthenticationError } = require('../errors/AppError');
 const catchAsync = require('../utils/catchAsync');
 const { User, USER_STATUS } = require('../../modules/users/user.model');
 const { ACTOR_ROLES } = require('../../modules/audit/audit.constants');
@@ -44,6 +44,9 @@ const authenticate = catchAsync(async (req, res, next) => {
     }
 
     // 4. Status gate — only ACTIVE users can use authenticated routes
+    if (currentUser.status === USER_STATUS.REJECTED) {
+        throw new AppError('Your account is blocked. Please contact customer support.', 401, 'ACCOUNT_BLOCKED');
+    }
     if (currentUser.status !== USER_STATUS.ACTIVE) {
         // Use a generic message; do not expose the exact status to token holders
         throw new AuthenticationError(
@@ -51,7 +54,11 @@ const authenticate = catchAsync(async (req, res, next) => {
         );
     }
 
-    if (currentUser.profileCompletionRequired) {
+    const requestPath = String(req.originalUrl || req.url || '').split('?')[0];
+    const isProfileCompletionUpdate = req.method === 'PATCH'
+        && /\/users\/me\/?$/.test(requestPath);
+
+    if (currentUser.profileCompletionRequired && !isProfileCompletionUpdate) {
         throw new AuthenticationError(
             'Profile completion is required before accessing the platform.'
         );
@@ -59,6 +66,7 @@ const authenticate = catchAsync(async (req, res, next) => {
 
     // 5. Attach to request
     req.user = currentUser;
+    req.profileCompletionOnly = Boolean(currentUser.profileCompletionRequired);
 
     /**
      * Audit context — available to any controller or service that receives `req`.

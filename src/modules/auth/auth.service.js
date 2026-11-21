@@ -8,6 +8,7 @@
  *   - login             : credential check + status + verification gate + 2FA gate
  *   - verifyEmail       : consume email token, mark verified
  *   - resendVerification: re-issue + re-send the verification email
+ *   - requestPasswordReset / resetPassword: issue and consume single-use reset links
  *   - loginWithGoogle   : called after successful passport OAuth callback
  *   - generate2FASecret : send email OTP before enabling 2FA
  *   - enable2FA         : confirm setup OTP and activate email OTP 2FA
@@ -92,6 +93,27 @@ const _hashOtp = (raw) =>
 const _generateTwoFactorOtp = () =>
     crypto.randomInt(0, 1000000).toString().padStart(6, '0');
 
+const _startTwoFactorChallenge = async (user, method = 'email') => {
+    const plainOtp = _generateTwoFactorOtp();
+    const tempToken = signTempToken(user._id);
+
+    user.twoFactorOtp = _hashOtp(plainOtp);
+    user.twoFactorOtpExpires = new Date(Date.now() + TWO_FACTOR_OTP_EXPIRY_MS);
+    await user.save();
+    await emailService.sendTwoFactorOtpEmail(user, plainOtp);
+
+    createAuditLog({
+        actorId: user._id,
+        actorRole: ACTOR_ROLES[user.role] ?? user.role,
+        action: USER_ACTIONS.LOGIN_SUCCESS,
+        entityType: ENTITY_TYPES.USER,
+        entityId: user._id,
+        metadata: { email: user.email, twoFactorPending: true, method },
+    });
+
+    return { requires2FA: true, tempToken, email: user.email };
+};
+
 const _normalizeCountry = (country) => {
     const value = String(country || '').trim().toUpperCase();
     if (!value) return null;
@@ -174,6 +196,10 @@ const register = async ({
     ref,
     inviteCode,
 }) => {
+    if (!/^\+[1-9]\d{7,14}$/.test(String(phone || '').trim())) {
+        throw new AppError('A valid phone number with its country code is required.', 400, 'PHONE_INVALID');
+    }
+
     // ── 1. Prevent duplicate accounts ─────────────────────────────────────────
     const normalizedReferralCode = normalizeIncomingReferralCode(referralCode, refCode, ref, inviteCode);
     const existing = await User.findOne({ email: email.toLowerCase() });
@@ -218,8 +244,8 @@ const register = async ({
         emailVerificationExpires: expiresAt,
         profileCompletedAt: new Date(),
         currency: normalizedCurrency,
+        phone: String(phone).trim(),
         ...(normalizedCountry ? { country: normalizedCountry } : {}),
-        ...(phone ? { phone } : {}),
         ...(username ? { username } : {}),
         ...buildReferralAssignment(referralOwner),
     });
@@ -270,7 +296,7 @@ const login = async ({ email, password }) => {
     }
 
     // ── Gate 1: Email verification ────────────────────────────────────────────
-    if (!user.verified) {
+    if (!user.verified && user.status !== USER_STATUS.REJECTED) {
         throw new AuthenticationError(
             'Please verify your email address before logging in. ' +
             'Check your inbox for the verification link.'
@@ -321,27 +347,19 @@ const login = async ({ email, password }) => {
         throw new AuthenticationError('Invalid email or password.');
     }
 
+    if (!/^\+[1-9]\d{7,14}$/.test(String(user.phone || '').trim())) {
+        const completionToken = await issueGoogleProfileCompletionToken(user);
+        return {
+            requiresProfileCompletion: true,
+            status: 'PROFILE_COMPLETION_REQUIRED',
+            completionToken,
+            user: user.toSafeObject(),
+        };
+    }
+
     // ── Gate 4: Two-Factor Authentication ─────────────────────────────────────
     if (user.isTwoFactorEnabled) {
-        const plainOtp = _generateTwoFactorOtp();
-        const tempToken = signTempToken(user._id);
-
-        user.twoFactorOtp = _hashOtp(plainOtp);
-        user.twoFactorOtpExpires = new Date(Date.now() + TWO_FACTOR_OTP_EXPIRY_MS);
-        await user.save();
-
-        await emailService.sendTwoFactorOtpEmail(user, plainOtp);
-
-        createAuditLog({
-            actorId: user._id,
-            actorRole: ACTOR_ROLES[user.role] ?? user.role,
-            action: USER_ACTIONS.LOGIN_SUCCESS,
-            entityType: ENTITY_TYPES.USER,
-            entityId: user._id,
-            metadata: { email: user.email, twoFactorPending: true },
-        });
-
-        return { requires2FA: true, tempToken, email: user.email };
+        return _startTwoFactorChallenge(user, 'email-password');
     }
 
     // ── 5. Issue full JWT ──────────────────────────────────────────────────────
@@ -433,6 +451,49 @@ const resendVerification = async (email) => {
     return { message: 'If that email exists, a verification link has been sent.' };
 };
 
+const requestPasswordReset = async (email) => {
+    const genericMessage = 'If that email exists, a password reset link has been sent.';
+    const user = await User.findOne({ email: String(email || '').toLowerCase() })
+        .select('+password +passwordResetToken +passwordResetExpires');
+
+    // Keep the response identical for unknown accounts and Google-only users.
+    if (!user || !user.password) return { message: genericMessage };
+
+    const { rawToken, hashedToken } = _generateVerificationToken();
+    user.passwordResetToken = hashedToken;
+    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
+    await user.save();
+
+    try {
+        await emailService.sendPasswordResetEmail(user, rawToken);
+    } catch (err) {
+        // Keep identical responses for known and unknown emails; SMTP failures are logged server-side.
+        console.error('[Auth] Failed to send password reset email:', err.message);
+    }
+    return { message: genericMessage };
+};
+
+const resetPassword = async ({ token, password }) => {
+    const hashedToken = _hashToken(String(token || ''));
+    const user = await User.findOne({
+        passwordResetToken: hashedToken,
+        passwordResetExpires: { $gt: new Date() },
+    }).select('+password +passwordResetToken +passwordResetExpires');
+
+    if (!user) {
+        throw new BusinessRuleError(
+            'Password reset link is invalid or has expired. Please request a new one.',
+            'INVALID_OR_EXPIRED_RESET_TOKEN'
+        );
+    }
+
+    user.password = password;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+    return { message: 'Password updated successfully.' };
+};
+
 // ─── loginWithGoogle ──────────────────────────────────────────────────────────
 
 /**
@@ -482,6 +543,10 @@ const loginWithGoogle = async (user) => {
         };
     }
 
+    if (user.isTwoFactorEnabled) {
+        return _startTwoFactorChallenge(user, 'google');
+    }
+
     const token = signToken(user._id, user.role);
 
     createAuditLog({
@@ -496,7 +561,7 @@ const loginWithGoogle = async (user) => {
     return { status: 'LOGIN_COMPLETE', token, user: user.toSafeObject() };
 };
 
-const completeGoogleProfile = async ({ completionToken, country, currency }) => {
+const completeGoogleProfile = async ({ completionToken, country, currency, phone }) => {
     if (!completionToken) {
         throw new AuthenticationError('Profile completion token is required.');
     }
@@ -516,10 +581,9 @@ const completeGoogleProfile = async ({ completionToken, country, currency }) => 
         throw new AuthenticationError('Profile completion token has expired.');
     }
 
-    if (!user.googleId) {
-        throw new AuthenticationError('Profile completion token is invalid.');
+    if (user.status === USER_STATUS.REJECTED) {
+        throw new AuthenticationError('Your account is blocked. Please contact customer support.');
     }
-
     if (user.status !== USER_STATUS.ACTIVE) {
         throw new AuthenticationError('Your account is not active. Contact an administrator.');
     }
@@ -532,11 +596,19 @@ const completeGoogleProfile = async ({ completionToken, country, currency }) => 
     }
 
     user.currency = await _normalizeCurrency(currency, { required: true });
+    if (!/^\+[1-9]\d{7,14}$/.test(String(phone || '').trim())) {
+        throw new AppError('A valid phone number with its country code is required.', 400, 'PHONE_INVALID');
+    }
+    user.phone = String(phone).trim();
 
     user.profileCompletedAt = new Date();
     user.profileCompletionToken = null;
     user.profileCompletionTokenExpires = null;
     await user.save();
+
+    if (user.isTwoFactorEnabled) {
+        return _startTwoFactorChallenge(user, user.googleId ? 'google-profile-completion' : 'email-profile-completion');
+    }
 
     const token = signToken(user._id, user.role);
 
@@ -723,6 +795,9 @@ const verify2FA = async (tempToken, code) => {
         throw new AuthenticationError('The user belonging to this token no longer exists.');
     }
 
+    if (user.status === USER_STATUS.REJECTED) {
+        throw new AuthenticationError('Your account is blocked. Please contact customer support.');
+    }
     if (user.status !== USER_STATUS.ACTIVE) {
         throw new AuthenticationError('Your account is not active. Contact an administrator.');
     }
@@ -779,6 +854,8 @@ module.exports = {
     login,
     verifyEmail,
     resendVerification,
+    requestPasswordReset,
+    resetPassword,
     loginWithGoogle,
     completeGoogleProfile,
     generate2FASecret,

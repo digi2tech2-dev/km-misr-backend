@@ -41,7 +41,7 @@ const findReferralOwnerByCode = async (rawCode) => {
         deletedAt: null,
     });
 
-    if (!owner) {
+    if (!owner || !owner.referralEnabled) {
         throw createReferralError('Invitation code is invalid.', 'REFERRAL_CODE_INVALID');
     }
 

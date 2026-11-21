@@ -8,6 +8,8 @@
  *   POST  /api/auth/login
  *   GET   /api/auth/verify-email?token=…
  *   POST  /api/auth/resend-verification
+ *   POST  /api/auth/forgot-password
+ *   POST  /api/auth/reset-password
  *   GET   /api/auth/google                  → Passport redirect to Google
  *   GET   /api/auth/google/callback         → Passport OAuth callback
  *
@@ -24,6 +26,8 @@ const authController = require('./auth.controller');
 const {
     registerValidation,
     loginValidation,
+    requestPasswordResetValidation,
+    resetPasswordValidation,
     enable2FAValidation,
     disable2FAValidation,
     verify2FAValidation,
@@ -153,6 +157,22 @@ router.post(
     ],
     validate,
     authController.resendVerification
+);
+
+router.post(
+    '/forgot-password',
+    authLimiter,
+    requestPasswordResetValidation,
+    validate,
+    authController.requestPasswordReset
+);
+
+router.post(
+    '/reset-password',
+    authLimiter,
+    resetPasswordValidation,
+    validate,
+    authController.resetPassword
 );
 
 // ─── Google OAuth ─────────────────────────────────────────────────────────────
