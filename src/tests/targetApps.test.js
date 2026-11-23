@@ -653,7 +653,8 @@ describe('Target app purchasing', () => {
             screenshotProof: 'uploads/targets/proof.png',
         });
 
-        await targetSvc.approveTargetOrder(order._id, admin._id);
+        await expect(targetSvc.approveTargetOrder(order._id, admin._id)).rejects.toMatchObject({ code: 'TARGET_PAYOUT_PROOF_REQUIRED' });
+        await targetSvc.approveTargetOrder(order._id, admin._id, null, 'uploads/targets/payout-proof.png');
         await expect(targetSvc.rejectTargetOrder(order._id, admin._id)).rejects.toMatchObject({
             code: 'TARGET_ORDER_ALREADY_APPROVED',
         });
@@ -686,7 +687,8 @@ describe('Target app purchasing', () => {
         await targetSvc.approveTargetOrder(
             approvalOrder._id,
             supervisor._id,
-            { actorId: supervisor._id, actorRole: ACTOR_ROLES.SUPERVISOR }
+            { actorId: supervisor._id, actorRole: ACTOR_ROLES.SUPERVISOR },
+            'uploads/targets/payout-proof.png'
         );
 
         const rejectionOrder = await targetSvc.createTargetOrder({

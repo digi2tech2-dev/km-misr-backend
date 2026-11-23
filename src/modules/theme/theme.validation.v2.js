@@ -165,7 +165,7 @@ function validateTheme(value) {
             layout[key] = inputLayout[key];
         }
     }
-    const platformName = value.brand.platformName === undefined ? 'Clash Cash' : value.brand.platformName;
+    const platformName = value.brand.platformName === undefined ? 'KM اولاد مصر' : value.brand.platformName;
     const { logoPath,logoWidth,slides } = value.brand;
     const inputSocialMedia = value.brand.socialMedia === undefined
         ? { phone: '', whatsapp: '', instagram: '', facebook: '' } : value.brand.socialMedia;
@@ -241,7 +241,7 @@ function preset(id) {
     const configuration = {
         schemaVersion: 2,
         modes,
-        brand: { platformName: 'Clash Cash', logoPath: null, logoWidth: 144, slides: [null,null,null,null,null], targetBannerPath: null },
+        brand: { platformName: 'KM اولاد مصر', logoPath: null, logoWidth: 144, slides: [null,null,null,null,null], targetBannerPath: null },
         chrome,
         layout: { productsPerRow, categoriesPerRow, productsPerRowMobile, categoriesPerRowMobile },
     };

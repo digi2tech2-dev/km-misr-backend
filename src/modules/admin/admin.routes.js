@@ -602,6 +602,17 @@ router.use('/categories', categoryRoutes);
 
 // TARGET APPS
 
+router.post('/target-apps/image-chunks', requirePermission('MANAGE_TARGETS'), catchAsync(async (req, res) => {
+    const { uploadChunk } = require('../targets/targetImageUpload.service');
+    const result = await uploadChunk({ ...req.body, ownerId: String(req.user._id) });
+    sendSuccess(res, result, 'Image upload processed.');
+}));
+router.delete('/target-apps/image-chunks/:uploadId', requirePermission('MANAGE_TARGETS'), catchAsync(async (req, res) => {
+    const { discardUpload } = require('../targets/targetImageUpload.service');
+    await discardUpload(String(req.user._id), req.params.uploadId);
+    sendSuccess(res, {}, 'Incomplete upload removed.');
+}));
+
 router.post(
     '/target-apps',
     requirePermission('MANAGE_TARGETS'),

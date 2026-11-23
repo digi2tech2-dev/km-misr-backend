@@ -244,9 +244,9 @@ const _passwordResetTemplate = ({ name, resetUrl }) => `
 <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head>
 <body style="margin:0;padding:32px;background:#f4f7ff;font-family:Arial,sans-serif;color:#20243a;">
   <div style="max-width:560px;margin:auto;padding:32px;border-radius:16px;background:#fff;">
-    <h1 style="font-size:22px;">Reset your CLASH cash password</h1>
+    <h1 style="font-size:22px;">Reset your KM اولاد مصر password</h1>
     <p>Hello ${String(name || 'there').replace(/[<>&"']/g, '')},</p>
-    <p>We received a request to reset your CLASH cash password. This link expires in one hour.</p>
+    <p>We received a request to reset your KM اولاد مصر password. This link expires in one hour.</p>
     <p>تم استلام طلب لإعادة تعيين كلمة مرور حسابك، والرابط صالح لمدة ساعة واحدة.</p>
     <p style="margin:28px 0;"><a href="${resetUrl}" style="padding:13px 20px;border-radius:8px;background:#b67c18;color:#fff;text-decoration:none;font-weight:bold;">Choose a new password · اختر كلمة مرور جديدة</a></p>
     <p>If you did not request this, you can ignore this email. إذا لم تطلب ذلك، يمكنك تجاهل هذه الرسالة.</p>
@@ -295,7 +295,7 @@ const sendPasswordResetEmail = async (user, rawToken) => {
     const resetUrl = `${frontendUrl}/auth?mode=reset-password&token=${encodeURIComponent(rawToken)}`;
     await sendEmail({
         to: user.email,
-        subject: 'Reset your CLASH cash password',
+        subject: 'Reset your KM اولاد مصر password',
         html: _passwordResetTemplate({ name: user.name, resetUrl }),
         text: `Reset your password using this link (expires in one hour): ${resetUrl}`,
     });
