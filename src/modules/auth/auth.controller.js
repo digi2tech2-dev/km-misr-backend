@@ -49,7 +49,7 @@ const register = catchAsync(async (req, res) => {
  */
 const login = catchAsync(async (req, res) => {
     const { email, password } = req.body;
-    const result = await authService.login({ email, password });
+    const result = await authService.login({ email, password }, req.get('user-agent'));
     sendSuccess(res, result, 'Logged in successfully.');
 });
 
@@ -118,7 +118,7 @@ const googleCallback = catchAsync(async (req, res) => {
         const frontendBase = config.frontend.verifyRedirectUrl.replace(/\/email-verified.*$/, '').replace(/\/+$/, '');
         return res.redirect(`${frontendBase}/auth?status=rejected`);
     }
-    const result = await authService.loginWithGoogle(req.user);
+    const result = await authService.loginWithGoogle(req.user, req.get('user-agent'));
 
     // Derive the FE base URL from the configured verify-redirect URL
     const frontendBase = config.frontend.verifyRedirectUrl
@@ -156,7 +156,7 @@ const googleCallback = catchAsync(async (req, res) => {
 
 const completeGoogleProfile = catchAsync(async (req, res) => {
     const { completionToken, country, currency, phone } = req.body;
-    const result = await authService.completeGoogleProfile({ completionToken, country, currency, phone });
+    const result = await authService.completeGoogleProfile({ completionToken, country, currency, phone }, req.get('user-agent'));
     sendSuccess(res, result, 'Profile completed successfully.');
 });
 
@@ -166,7 +166,7 @@ const nativeGoogleLogin = catchAsync(async (req, res) => {
         intent: req.body.intent,
         referralCode: req.body.referralCode || req.body.refCode || req.body.ref || req.body.inviteCode,
     });
-    const result = await authService.loginWithGoogle(user);
+    const result = await authService.loginWithGoogle(user, req.get('user-agent'));
     sendSuccess(res, result, 'Google sign-in completed.');
 });
 
@@ -207,7 +207,7 @@ const disable2FA = catchAsync(async (req, res) => {
  */
 const verify2FA = catchAsync(async (req, res) => {
     const { tempToken, code } = req.body;
-    const result = await authService.verify2FA(tempToken, code);
+    const result = await authService.verify2FA(tempToken, code, req.get('user-agent'));
     sendSuccess(res, result, 'Logged in successfully.');
 });
 

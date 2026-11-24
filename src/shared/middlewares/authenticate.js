@@ -65,6 +65,10 @@ const authenticate = catchAsync(async (req, res, next) => {
     }
 
     // 5. Attach to request
+    if (currentUser.role === 'ADMIN') {
+        await require('../../modules/auth/adminSession').requireSession(currentUser._id, decoded.sid);
+        req.adminSessionId = decoded.sid;
+    }
     req.user = currentUser;
     req.profileCompletionOnly = Boolean(currentUser.profileCompletionRequired);
 

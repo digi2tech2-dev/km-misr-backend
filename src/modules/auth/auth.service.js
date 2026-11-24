@@ -54,10 +54,18 @@ const TWO_FACTOR_OTP_EXPIRY_MS = 5 * 60 * 1000;
 const PROFILE_COMPLETION_EXPIRY_MS = 15 * 60 * 1000;
 
 /** Sign full-session JWT for a user. */
-const signToken = (userId, role) =>
-    jwt.sign({ id: userId, role }, config.jwt.secret, {
-        expiresIn: config.jwt.expiresIn,
-    });
+const { AdminSession } = require('./adminSession');
+const signToken = async (userId, role, agent) => {
+    const payload = { id: userId, role };
+    const session = role === ROLES.ADMIN ? new AdminSession({ userId, agent: String(agent || '').slice(0, 512) }) : null;
+    if (session) payload.sid = String(session._id);
+    const token = jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
+    if (session) {
+        session.expiresAt = new Date(jwt.decode(token).exp * 1000);
+        await session.save();
+    }
+    return token;
+};
 
 /**
  * Sign a short-lived temporary JWT for 2FA-pending sessions.
@@ -287,7 +295,7 @@ const register = async ({
  *   3. Status must be ACTIVE (not PENDING / REJECTED)
  *   4. Password must match
  */
-const login = async ({ email, password }) => {
+const login = async ({ email, password }, agent) => {
     const user = await User.findOne({ email: email.toLowerCase() })
         .select('+password +verified');
 
@@ -363,7 +371,7 @@ const login = async ({ email, password }) => {
     }
 
     // ── 5. Issue full JWT ──────────────────────────────────────────────────────
-    const token = signToken(user._id, user.role);
+    const token = await signToken(user._id, user.role, agent);
 
     createAuditLog({
         actorId: user._id,
@@ -516,7 +524,7 @@ const issueGoogleProfileCompletionToken = async (user) => {
     return rawToken;
 };
 
-const loginWithGoogle = async (user) => {
+const loginWithGoogle = async (user, agent) => {
     if (user.status === USER_STATUS.PENDING) {
         // Return a token-less response so the frontend can show the approval message.
         // Some frontends prefer a token even for pending users; adjust as needed.
@@ -547,7 +555,7 @@ const loginWithGoogle = async (user) => {
         return _startTwoFactorChallenge(user, 'google');
     }
 
-    const token = signToken(user._id, user.role);
+    const token = await signToken(user._id, user.role, agent);
 
     createAuditLog({
         actorId: user._id,
@@ -561,7 +569,7 @@ const loginWithGoogle = async (user) => {
     return { status: 'LOGIN_COMPLETE', token, user: user.toSafeObject() };
 };
 
-const completeGoogleProfile = async ({ completionToken, country, currency, phone }) => {
+const completeGoogleProfile = async ({ completionToken, country, currency, phone }, agent) => {
     if (!completionToken) {
         throw new AuthenticationError('Profile completion token is required.');
     }
@@ -610,7 +618,7 @@ const completeGoogleProfile = async ({ completionToken, country, currency, phone
         return _startTwoFactorChallenge(user, user.googleId ? 'google-profile-completion' : 'email-profile-completion');
     }
 
-    const token = signToken(user._id, user.role);
+    const token = await signToken(user._id, user.role, agent);
 
     createAuditLog({
         actorId: user._id,
@@ -770,7 +778,7 @@ const disable2FA = async (userId, { password } = {}) => {
  * @param {string} code      — 6-digit email OTP
  * @returns {{ token: string, user: Object }}
  */
-const verify2FA = async (tempToken, code) => {
+const verify2FA = async (tempToken, code, agent) => {
     // 1. Verify the temp token
     let decoded;
     try {
@@ -835,7 +843,7 @@ const verify2FA = async (tempToken, code) => {
     await user.save();
 
     // 4. Issue full JWT
-    const fullToken = signToken(user._id, user.role);
+    const fullToken = await signToken(user._id, user.role, agent);
 
     createAuditLog({
         actorId: user._id,

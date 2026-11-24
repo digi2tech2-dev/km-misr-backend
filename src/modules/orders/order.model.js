@@ -54,6 +54,14 @@ const orderSchema = new mongoose.Schema(
             index: true,
         },
 
+        waDelivery: {
+            type: new mongoose.Schema({
+                product: String, nextAt: Date, owner: String, sent: [String],
+            }, { _id: false }),
+            default: undefined,
+            select: false,
+        },
+
         productId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Product',
@@ -385,6 +393,7 @@ const orderSchema = new mongoose.Schema(
 
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ status: 1 });
+orderSchema.index({ 'waDelivery.nextAt': 1 }, { sparse: true });
 orderSchema.index({ groupIdSnapshot: 1 });
 
 /** Idempotency enforcement — sparse because not all orders carry a key. */

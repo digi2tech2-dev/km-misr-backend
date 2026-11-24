@@ -14,7 +14,8 @@ const isAuthorizedAdmin = async (req) => {
         const decoded = jwt.verify(token, config.jwt.secret);
         if (!decoded?.id || decoded.purpose === '2fa-pending') return false;
         const user = await User.findById(decoded.id).select('role status profileCompletionRequired').lean();
-        return user?.role === ROLES.ADMIN && user?.status === USER_STATUS.ACTIVE && !user?.profileCompletionRequired;
+        return user?.role === ROLES.ADMIN && user?.status === USER_STATUS.ACTIVE && !user?.profileCompletionRequired
+            && Boolean(await require('../../modules/auth/adminSession').activeSession(user._id, decoded.sid));
     } catch {
         return false;
     }

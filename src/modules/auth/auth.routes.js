@@ -260,4 +260,27 @@ router.post('/2fa/disable', authenticate, disable2FAValidation, validate, authCo
  */
 router.post('/verify-2fa', authLimiter, verify2FAValidation, validate, authController.verify2FA);
 
+const authorize = require('../../shared/middlewares/authorize');
+const catchAsync = require('../../shared/utils/catchAsync');
+const { AdminSession, deviceLabel } = require('./adminSession');
+const adminOnly = [authenticate, authorize('ADMIN')];
+
+router.get('/sessions', ...adminOnly, catchAsync(async (req, res) => {
+    const sessions = await AdminSession.find({ userId: req.user._id, expiresAt: { $gt: new Date() } })
+        .sort({ lastActive: -1 }).lean();
+    res.set('Cache-Control', 'no-store').json({ success: true, data: sessions.map(session => ({
+        id: String(session._id),
+        device: deviceLabel(session.agent),
+        lastActive: session.lastActive,
+        current: String(session._id) === req.adminSessionId,
+    })) });
+}));
+
+router.delete('/sessions/:id', ...adminOnly, catchAsync(async (req, res) => {
+    const id = req.params.id === 'current' ? req.adminSessionId : req.params.id;
+    if (!/^[0-9a-f]{24}$/i.test(id)) return res.sendStatus(400);
+    await AdminSession.deleteOne({ _id: id, userId: req.user._id });
+    res.sendStatus(204);
+}));
+
 module.exports = router;

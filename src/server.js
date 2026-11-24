@@ -21,6 +21,7 @@ const startServer = async ({
     registerProcessHandlers = true,
     exitOnFailure = true,
 } = {}) => {
+    let stopOrderNotices;
     try {
         // 1. Connect to MongoDB first
         await connectDatabase();
@@ -43,6 +44,7 @@ const startServer = async ({
             console.warn('[Startup] SAFE_LOCAL_PRODUCTION_MODE=true: jobs and WhatsApp initialization are disabled.');
         } else {
             if (!isExplicitlyDisabled(process.env.BACKGROUND_JOBS_ENABLED)) {
+                if (process.env.NODE_ENV !== 'test') stopOrderNotices = require('./modules/orders/orderNotice.job').start();
                 fulfillment.start();
                 providerSync.start();
             } else {
@@ -67,6 +69,7 @@ const startServer = async ({
             console.log(`\n⚠️  Received ${signal}. Shutting down gracefully...`);
 
             // Stop both cron jobs before closing HTTP
+            stopOrderNotices?.();
             fulfillment.stop();
             providerSync.stop();
             whatsapp.destroyWhatsAppClient().catch((err) => {
