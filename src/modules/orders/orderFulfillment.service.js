@@ -274,6 +274,7 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
             externalProductId = await getExternalProductId(order.productId._id);
         }
     } catch (_) { /* non-fatal — fallback to productId below */ }
+    const isBulalaOrder = externalProductId === 'ibulala_dynamic_coins';
 
     // ── Build provider params from customerInput.values + providerMapping ───────
     // Convert internal field keys → provider-expected parameter names.
@@ -287,22 +288,25 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
     // ── Call the provider ──────────────────────────────────────────────────────
     console.log(`[Fulfillment] Placing order ${orderId} with provider…`);
 
-    if (externalProductId === 'ibulala_dynamic_coins') {
+    if (isBulalaOrder) {
         const claimed = await Order.findOneAndUpdate({ _id: orderId, status: ORDER_STATUS.PROCESSING, dealerSaleAttemptedAt: null },
             { $set: { dealerSaleAttemptedAt: new Date(), providerStatus: 'PLACEMENT_UNCERTAIN', lastCheckedAt: new Date() } });
         if (!claimed) return { order, placed: false, refunded: false };
     }
     let result;
     try {
-        result = await resolvedProvider.placeOrder({
-            ...mappedCustomerFields,
+        const orderParams = {
             providerProductId: externalProductId ?? String(order.productId._id),
             externalProductId: externalProductId ?? String(order.productId._id),
             quantity: order.quantity,
             // This persisted value is the only upstream idempotency reference.
             // It must be reused across recovery checks and never regenerated.
             referenceId: order.orderNumber,
-        });
+        };
+        // Preserve the existing mapping precedence for other suppliers.
+        result = await resolvedProvider.placeOrder(isBulalaOrder
+            ? { ...mappedCustomerFields, ...orderParams }
+            : { ...orderParams, ...mappedCustomerFields });
     } catch (err) {
         // Classify the error: transient (network/timeout) vs hard rejection.
         //
@@ -320,7 +324,10 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
             err.response?.status === 504 ||
             String(err.message ?? '').toLowerCase().includes('timeout');
 
-        if (isTransient) {
+        if (isBulalaOrder) {
+            result = { success: true, providerOrderId: null, providerStatus: 'PLACEMENT_UNCERTAIN',
+                requiresManualReview: true, rawResponse: { placement: 'uncertain' } };
+        } else if (isTransient) {
             console.warn(`[Fulfillment] Transient error placing order ${orderId} — leaving PROCESSING for cron retry:`, err.message);
             // Return a synthetic "still pending" result — DO NOT refund.
             result = {
@@ -347,6 +354,15 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
     // ── Interpret result ───────────────────────────────────────────────────────
     let newStatus;
     let refundIssued = false;
+
+    if (isBulalaOrder && result?.definitePreSendFailure !== true
+        && !(result?.success === true && result?.providerStatus === 'Completed')) {
+        await Order.findByIdAndUpdate(orderId, { $set: {
+            status: ORDER_STATUS.MANUAL_REVIEW, providerStatus: 'PLACEMENT_UNCERTAIN',
+            providerOrderId: null, providerRawResponse: result?.rawResponse ?? null, lastCheckedAt: new Date(),
+        } });
+        return { order: await Order.findById(orderId), placed: false, refunded: false, manualReview: true };
+    }
 
     if (!result.success) {
         newStatus = ORDER_STATUS.FAILED;

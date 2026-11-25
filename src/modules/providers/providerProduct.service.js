@@ -122,6 +122,7 @@ const normalizeDealerDynamicProduct = (product) => {
     const dynamicProduct = getDealerDynamicProductById(plain?.externalProductId);
 
     if (plain?.externalProductId === 'ibulala_dynamic_coins') {
+        if (!require('./bulalaSettings.service').isBulala(plain.provider)) return plain;
         return { ...plain, ...require('./bulalaSettings.service').configuredDto(plain) };
     }
     if (!dynamicProduct) return plain;

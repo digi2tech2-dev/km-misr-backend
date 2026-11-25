@@ -494,7 +494,7 @@ const _attemptCreateOrder = async (
                 const s = pp.adminSettings;
                 const q = Number(quantity);
                 if (!s || !pp.isActive || !product.provider || String(pp.provider) !== String(product.provider)
-                    || !Number.isSafeInteger(q) || q < s.minQty || q > s.maxQty) {
+                    || !/^\d+$/.test(String(quantity ?? '')) || !Number.isSafeInteger(q) || q < s.minQty || q > s.maxQty) {
                     throw new BusinessRuleError('Bulala is unconfigured or quantity is outside configured bounds.', 'QUANTITY_OUT_OF_RANGE');
                 }
             }
@@ -544,6 +544,10 @@ const _attemptCreateOrder = async (
             // No formal schema — save raw values so the fulfillment engine
             // can forward them to the provider (e.g. { link: '...' }).
             customerInput = { values: orderFieldsValues, fieldsSnapshot: [] };
+        }
+
+        if (product.bulalaDynamicKey) {
+            await require('../providers/bulalaSettings.service').verifyCheckoutTarget(product, customerInput?.values, session);
         }
 
         // ── 2c. JIT Provider Price Verification ────────────────────────────────

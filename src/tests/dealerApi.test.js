@@ -93,6 +93,21 @@ describe('normalizeProviderDecimalPrice', () => {
 });
 
 describe('DealerApiAdapter dynamic products', () => {
+    it.each(['karak', 'karak-chat', 'dealer-api'])('preserves legacy sale and polling behavior for %s', async slug => {
+        const { adapter, client } = makeAdapter({ slug });
+        client.post.mockResolvedValueOnce({ data: { code: 200 } });
+        const result = await adapter.placeOrder({ playerId: '12345', quantity: 50, referenceId: 'legacy' });
+        expect(result).toMatchObject({ success: true, providerOrderId: 'legacy', providerStatus: 'Completed' });
+        expect(client.post.mock.calls[0][2].params.toUserId).toBe(12345);
+        expect(await adapter.checkOrder('legacy')).toMatchObject({ providerStatus: 'Completed' });
+        for (const checked of await adapter.checkOrders(['1', '2'])) {
+            expect(checked.providerStatus).toBe('Completed');
+            expect(checked.requiresManualReview).toBeUndefined();
+        }
+        client.post.mockRejectedValueOnce(new Error('timeout'));
+        expect(await adapter.placeOrder({ playerId: '12345', quantity: 50 })).toMatchObject({ success: false, providerStatus: 'Cancelled' });
+        expect(ProviderProduct.findOne).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         axios.create.mockReset();
         axios.create.mockImplementation(() => makeFakeAxios());
@@ -204,7 +219,7 @@ describe('DealerApiAdapter dynamic products', () => {
         expect(client.post).toHaveBeenCalledWith('/dealer/sale', null, {
             params: {
                 secretKey: 'ibulala-secret',
-                toUserId: 98765,
+                toUserId: '98765',
                 coins: 1200,
             },
             headers: {

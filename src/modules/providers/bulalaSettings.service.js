@@ -14,6 +14,11 @@ const isBulala = (p = {}) => {
     const keys = [p.slug, p.name, p.code, p.supplierCode, p.supplierName].map(v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
     return keys.some(k => ['coinrecharge', 'bulala', 'ibulala', 'ibulalachat'].includes(k));
 };
+const isBulalaProviderProduct = async (pp, session = null) => {
+    if (pp?.externalProductId !== EXTERNAL_ID || !pp.provider) return false;
+    const provider = pp.provider.slug ? pp.provider : await Provider.findById(pp.provider).session(session);
+    return Boolean(provider && isBulala(provider));
+};
 const validateSettings = (input = {}) => {
     const name = typeof input.name === 'string' ? input.name.trim() : '';
     let cost;
@@ -64,15 +69,21 @@ const saveSettings = async (id, input, actorId) => {
                     ? add(settings.unitCost, current.manualPriceAdjustment || '0')
                     : computeFinalPrice(settings.unitCost, current?.markupType || 'percentage', current?.markupValue || '0');
                 if (!isPositive(price)) throw new ValidationError('السعر بعد تعديل هامش الربح يجب أن يكون موجبًا.');
-                const product = await Product.findOneAndUpdate(current ? { _id: current._id } : { bulalaDynamicKey: String(id) }, {
-                    $set: { bulalaDynamicKey: String(id), name: settings.name, provider: id, providerProduct: pp._id,
+                const productData = { bulalaDynamicKey: String(id), name: settings.name, provider: id, providerProduct: pp._id,
                         providerPrice: settings.unitCost, basePrice: price, finalPrice: price,
                         minQty: settings.minQty, maxQty: settings.maxQty, pricingMode: 'sync', syncPriceWithProvider: true,
                         executionType: 'automatic', isActive: true,
-                        orderFields: [{ id: 'bulala_player_id', key: 'player_id', label: 'معرّف اللاعب', type: 'text', required: true }],
-                        providerMapping: { player_id: 'toUserId' } },
+                        orderFields: [{ id: 'bulala_player_id', key: 'player_id', label: 'معرّف اللاعب', type: 'text', required: true, isVerifiable: true }],
+                        providerMapping: { player_id: 'toUserId' } };
+                // Validate as a document so the shared quantity validator keeps
+                // its original behavior for every other supplier's update flow.
+                const candidate = new Product({ ...(current?.toObject() || {}), ...productData });
+                const validationError = candidate.validateSync();
+                if (validationError) throw validationError;
+                const product = await Product.findOneAndUpdate(current ? { _id: current._id } : { bulalaDynamicKey: String(id) }, {
+                    $set: productData,
                     $setOnInsert: { createdBy: actorId, compatProductId },
-                }, { upsert: true, new: true, session, runValidators: true });
+                }, { upsert: true, new: true, session });
                 result = { settings, productId: product._id, providerProductId: pp._id };
             });
             require('./providerPriceCache').invalidate(String(id));
@@ -80,6 +91,17 @@ const saveSettings = async (id, input, actorId) => {
         } catch (error) {
             if (error.code !== 11000 || attempt === 2) throw error;
         }
+    }
+};
+
+const verifyCheckoutTarget = async (product, values, session = null) => {
+    const provider = await getProvider(product.provider, session);
+    if (!provider.isActive) throw new ValidationError('مورد Bulala غير نشط.');
+    try {
+        const { getProviderAdapter } = require('./adapters/adapter.factory');
+        await getProviderAdapter(provider, { strict: true }).validateUser(values?.player_id);
+    } catch (_) {
+        throw new ValidationError('تعذر تأكيد معرّف لاعب Bulala. تحقق من المعرّف وأعد المحاولة.');
     }
 };
 
@@ -93,4 +115,4 @@ const configuredDto = (pp) => {
         { externalProductId: EXTERNAL_ID, rawName: 'Bulala', rawPrice: '0', price: '0', minQty: 1, maxQty: 1, isActive: false, rawPayload: null };
 };
 
-module.exports = { EXTERNAL_ID, isBulala, validateSettings, getSettings, saveSettings, configuredDto };
+module.exports = { EXTERNAL_ID, isBulala, isBulalaProviderProduct, validateSettings, getSettings, saveSettings, configuredDto, verifyCheckoutTarget };
