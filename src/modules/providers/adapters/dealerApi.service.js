@@ -24,7 +24,7 @@ const DEALER_DYNAMIC_APPS = Object.freeze([
     }),
     Object.freeze({
         key: 'ibulala',
-        providerKeys: Object.freeze(['ibulala', 'ibulala-chat', 'ibulala chat', 'ibulalachat']),
+        providerKeys: Object.freeze(['coin-recharge', 'bulala', 'ibulala', 'ibulala-chat', 'ibulala chat', 'ibulalachat']),
         product: Object.freeze({
             id: 'ibulala_dynamic_coins',
             name: 'Ibulala Dynamic Coins (Any Amount)',
@@ -304,6 +304,7 @@ class DealerApiAdapter extends BaseProviderAdapter {
     }
 
     async placeOrder(params = {}) {
+        let dispatched = false;
         try {
             const targetId = extractTargetId(params);
             if (!targetId) {
@@ -335,6 +336,17 @@ class DealerApiAdapter extends BaseProviderAdapter {
                     coins: params.coins ?? params.amount ?? params.quantity,
                 };
 
+            if (getDealerDynamicApp(this.provider)?.key === 'ibulala') {
+                const { ProviderProduct } = require('../providerProduct.model');
+                const pp = await ProviderProduct.findOne({ provider: this.provider._id, externalProductId: 'ibulala_dynamic_coins' });
+                const s = pp?.adminSettings;
+                if (!isDealerDynamicProduct || !s || !pp.isActive || !Number.isSafeInteger(saleParams.coins)
+                    || saleParams.coins < s.minQty || saleParams.coins > s.maxQty) {
+                    throw new Error('Bulala product is unconfigured or quantity is outside configured bounds');
+                }
+            }
+            if (!Number.isSafeInteger(Number(targetId)) || Number(targetId) <= 0) throw new Error('Invalid player ID');
+            dispatched = true;
             const sale = await this.processSale(saleParams);
 
             return {
@@ -346,6 +358,11 @@ class DealerApiAdapter extends BaseProviderAdapter {
                 errorMessage: null,
             };
         } catch (err) {
+            // Only documented sale rejection codes are definitive after dispatch.
+            if (dispatched && !['131', '138'].includes(String(err.code))) {
+                return { success: true, providerOrderId: null, providerStatus: 'PLACEMENT_UNCERTAIN',
+                    rawResponse: { placement: 'uncertain' }, errorMessage: 'Provider outcome requires manual verification' };
+            }
             return {
                 success: false,
                 providerOrderId: null,
@@ -388,6 +405,12 @@ class DealerApiAdapter extends BaseProviderAdapter {
     async getProducts() {
         const dynamicApp = getDealerDynamicApp(this.provider);
 
+        if (dynamicApp?.key === 'ibulala') {
+            const { ProviderProduct } = require('../providerProduct.model');
+            const { configuredDto } = require('../bulalaSettings.service');
+            const pp = this.provider._id ? await ProviderProduct.findOne({ provider: this.provider._id, externalProductId: 'ibulala_dynamic_coins' }) : null;
+            return [configuredDto(pp)];
+        }
         if (dynamicApp) {
             return [buildDealerDynamicProductDto(dynamicApp)];
         }
@@ -398,8 +421,9 @@ class DealerApiAdapter extends BaseProviderAdapter {
     async checkOrder(orderId) {
         return {
             providerOrderId: String(orderId),
-            providerStatus: 'Completed',
-            unifiedStatus: this.toUnifiedStatus('Completed'),
+            providerStatus: 'Pending',
+            unifiedStatus: this.toUnifiedStatus('Pending'),
+            requiresManualReview: true,
             rawResponse: null,
         };
     }
@@ -407,8 +431,9 @@ class DealerApiAdapter extends BaseProviderAdapter {
     async checkOrders(orderIds = []) {
         return orderIds.map((orderId) => ({
             providerOrderId: String(orderId),
-            providerStatus: 'Completed',
-            unifiedStatus: this.toUnifiedStatus('Completed'),
+            providerStatus: 'Pending',
+            unifiedStatus: this.toUnifiedStatus('Pending'),
+            requiresManualReview: true,
             rawResponse: null,
         }));
     }

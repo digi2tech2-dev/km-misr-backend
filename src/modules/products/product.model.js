@@ -58,6 +58,8 @@ const productSchema = new mongoose.Schema(
             maxlength: [200, 'Product name cannot exceed 200 characters'],
         },
 
+        bulalaDynamicKey: { type: String },
+
         compatProductId: {
             type: Number,
             unique: true,
@@ -114,7 +116,7 @@ const productSchema = new mongoose.Schema(
             type: Number,
             required: [true, 'Maximum quantity is required'],
             validate: {
-                validator: function (v) { return v >= this.minQty; },
+                validator: function (v) { return v >= (typeof this.get === 'function' ? this.get('minQty') : this.minQty); },
                 message: 'maxQty must be >= minQty',
             },
         },
@@ -469,6 +471,7 @@ const productSchema = new mongoose.Schema(
 productSchema.index({ name: 1 });
 productSchema.index({ isActive: 1 });
 productSchema.index({ provider: 1, isActive: 1 });        // provider product listings
+productSchema.index({ bulalaDynamicKey: 1 }, { unique: true, partialFilterExpression: { bulalaDynamicKey: { $type: 'string' } } });
 productSchema.index({ providerProduct: 1 });               // price-sync: find Products by ProviderProduct
 productSchema.index({ pricingMode: 1, provider: 1 });     // price-sync: find 'sync' mode candidates
 productSchema.index({ isActive: 1, displayOrder: 1 });    // user-facing product list

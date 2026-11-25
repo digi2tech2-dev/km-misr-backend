@@ -141,7 +141,10 @@ const createProduct = async ({
 
     if (providerProduct) {
         // Fetch provider product's raw price for markup calculation
-        const pp = await ProviderProduct.findById(providerProduct).select('rawPrice rawPayload');
+        const pp = await ProviderProduct.findById(providerProduct).select('rawPrice rawPayload externalProductId');
+        if (pp?.externalProductId === 'ibulala_dynamic_coins') {
+            throw new BusinessRuleError('Use Bulala coin settings to prepare this product.', 'BULALA_SETTINGS_REQUIRED');
+        }
         if (pp) {
             const effectiveRawPrice = getCanonicalProviderProductPrice(pp);
             resolvedProviderPrice = effectiveRawPrice;
@@ -253,6 +256,9 @@ const publishFromProviderProduct = async ({
 
     // ── Validate ProviderProduct ───────────────────────────────────────────────
     const pp = await ProviderProduct.findById(providerProductId).populate('provider');
+    if (pp?.externalProductId === 'ibulala_dynamic_coins') {
+        throw new BusinessRuleError('Use Bulala coin settings to prepare this product.', 'BULALA_SETTINGS_REQUIRED');
+    }
     if (!pp) throw new NotFoundError('ProviderProduct');
     if (!pp.provider.isActive) {
         throw new BusinessRuleError(
@@ -380,6 +386,12 @@ const updateProduct = async (productId, updates) => {
     );
 
     // ── Determine effective pricing fields ────────────────────────────────
+    if (safe.providerProduct && String(safe.providerProduct) !== String(product.providerProduct?._id || product.providerProduct)) {
+        const incoming = await ProviderProduct.findById(safe.providerProduct);
+        if (incoming?.externalProductId === 'ibulala_dynamic_coins') {
+            throw new BusinessRuleError('Use Bulala coin settings to link this product.', 'BULALA_SETTINGS_REQUIRED');
+        }
+    }
     const effectivePricingMode = safe.pricingMode ?? product.pricingMode;
     const effectiveMarkupType = safe.markupType ?? product.markupType;
     const effectiveMarkupValue = safe.markupValue ?? product.markupValue;

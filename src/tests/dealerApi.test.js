@@ -4,6 +4,8 @@ jest.mock('axios', () => ({
     create: jest.fn(),
 }));
 
+jest.mock('../modules/providers/providerProduct.model', () => ({ ProviderProduct: { findOne: jest.fn() } }));
+const { ProviderProduct } = require('../modules/providers/providerProduct.model');
 const axios = require('axios');
 const {
     DealerApiAdapter,
@@ -127,13 +129,7 @@ describe('DealerApiAdapter dynamic products', () => {
 
         const products = await adapter.getProducts();
 
-        expect(products).toEqual([
-            expect.objectContaining(expectedDynamicProduct(
-                'ibulala_dynamic_coins',
-                'Ibulala Dynamic Coins (Any Amount)',
-                { price: '0.00000000001', maxQty: 500000000 }
-            )),
-        ]);
+        expect(products).toEqual([expect.objectContaining({ externalProductId: 'ibulala_dynamic_coins', rawPrice: '0', isActive: false })]);
         expect(client.get).not.toHaveBeenCalled();
     });
 
@@ -188,7 +184,8 @@ describe('DealerApiAdapter dynamic products', () => {
         });
     });
 
-    it('uses processSale successfully for the Ibulala dynamic product', async () => {
+    it('uses processSale successfully for the configured Ibulala dynamic product', async () => {
+        ProviderProduct.findOne.mockResolvedValueOnce({ isActive: true, adminSettings: { minQty: 1, maxQty: 2000 } });
         const { adapter, client } = makeAdapter({
             slug: 'ibulala-chat',
             name: 'Ibulala Chat',

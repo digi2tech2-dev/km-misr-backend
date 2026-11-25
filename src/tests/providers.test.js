@@ -44,19 +44,8 @@ describe('Dealer dynamic provider product selection', () => {
 
         expect(result.products).toHaveLength(1);
         expect(result.products[0]).toMatchObject({
-            externalProductId: 'ibulala_dynamic_coins',
-            rawName: 'Ibulala Dynamic Coins (Any Amount)',
-            rawPrice: '0.00000000001',
-            price: '0.00000000001',
-            minQty: 1,
-            maxQty: 500000000,
-            isActive: true,
-            rawPayload: expect.objectContaining({
-                product_id: 'ibulala_dynamic_coins',
-                product_name: 'Ibulala Dynamic Coins (Any Amount)',
-                product_price: '0.00000000001',
-                currency: 'USD',
-            }),
+            externalProductId: 'ibulala_dynamic_coins', rawName: 'Bulala', rawPrice: '0',
+            price: '0', minQty: 1, maxQty: 1, isActive: false,
         });
 
         const persisted = await ProviderProduct.findOne({
@@ -99,7 +88,7 @@ describe('Dealer dynamic provider product selection', () => {
         });
     });
 
-    it('sync/upsert preserves Ibulala tiny price as a plain decimal string', async () => {
+    it('sync/upsert keeps unconfigured Ibulala unavailable', async () => {
         const provider = await makeProvider({
             name: 'Ibulala Chat',
             slug: 'ibulala-chat',
@@ -113,18 +102,8 @@ describe('Dealer dynamic provider product selection', () => {
 
         expect(syncResult.totalFetched).toBe(1);
         expect(persisted).toMatchObject({
-            externalProductId: 'ibulala_dynamic_coins',
-            rawName: 'Ibulala Dynamic Coins (Any Amount)',
-            rawPrice: '0.00000000001',
-            minQty: 1,
-            maxQty: 500000000,
-            rawPayload: expect.objectContaining({
-                price: '0.00000000001',
-                product_price: '0.00000000001',
-            }),
+            externalProductId: 'ibulala_dynamic_coins', rawPrice: '0', isActive: false,
         });
-        expect(persisted.rawPrice).not.toBe('18');
-        expect(persisted.rawPayload.product_price).not.toBe('18');
     });
 
     it('sync/upsert preserves Karak product ID and price', async () => {

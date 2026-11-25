@@ -162,7 +162,7 @@ const refundFailedOrder = async (order) => {
     }
 };
 const { getProviderAdapter } = require('../providers/adapters/adapter.factory');
-const Provider = require('../providers/provider.model');
+const { Provider } = require('../providers/provider.model');
 const { Product } = require('../products/product.model');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,6 +202,8 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
         console.error(`[Fulfillment] executeOrder: order ${orderId} not found`);
         return { order: null, placed: false, refunded: false };
     }
+
+    if (order.dealerSaleAttemptedAt) return { order, placed: false, refunded: false };
 
     // Guard: only attempt execution once
     if (order.status !== ORDER_STATUS.PROCESSING) {
@@ -285,16 +287,21 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
     // ── Call the provider ──────────────────────────────────────────────────────
     console.log(`[Fulfillment] Placing order ${orderId} with provider…`);
 
+    if (externalProductId === 'ibulala_dynamic_coins') {
+        const claimed = await Order.findOneAndUpdate({ _id: orderId, status: ORDER_STATUS.PROCESSING, dealerSaleAttemptedAt: null },
+            { $set: { dealerSaleAttemptedAt: new Date(), providerStatus: 'PLACEMENT_UNCERTAIN', lastCheckedAt: new Date() } });
+        if (!claimed) return { order, placed: false, refunded: false };
+    }
     let result;
     try {
         result = await resolvedProvider.placeOrder({
+            ...mappedCustomerFields,
             providerProductId: externalProductId ?? String(order.productId._id),
             externalProductId: externalProductId ?? String(order.productId._id),
             quantity: order.quantity,
             // This persisted value is the only upstream idempotency reference.
             // It must be reused across recovery checks and never regenerated.
             referenceId: order.orderNumber,
-            ...mappedCustomerFields,   // ← spread translated customer fields onto params
         });
     } catch (err) {
         // Classify the error: transient (network/timeout) vs hard rejection.
@@ -528,6 +535,13 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
 
     // ─── END OF TOP-LEVEL CRASH GUARD ──────────────────────────────────────
     } catch (fatalErr) {
+        const dispatched = await Order.findById(orderId).catch(() => null);
+        if (dispatched?.dealerSaleAttemptedAt) {
+            if (dispatched.status === ORDER_STATUS.PROCESSING) {
+                await Order.findByIdAndUpdate(orderId, { $set: { status: ORDER_STATUS.MANUAL_REVIEW } });
+            }
+            return { order: dispatched, placed: false, refunded: false };
+        }
         // Something completely unexpected crashed — mark FAILED + refund
         console.error(`[Fulfillment] FATAL crash in executeOrder for ${orderId}:`, fatalErr);
 
@@ -571,6 +585,12 @@ const executeOrder = async (orderId, provider = null, auditContext = null) => {
 const processOrderStatusResult = async (order, statusResult) => {
     if (order.status !== ORDER_STATUS.PROCESSING) {
         return { action: 'skipped' };
+    }
+    if (statusResult.requiresManualReview) {
+        await Order.findByIdAndUpdate(order._id, { $set: {
+            status: ORDER_STATUS.MANUAL_REVIEW, lastCheckedAt: new Date(),
+        } });
+        return { action: 'manual-review' };
     }
 
     const now = new Date();

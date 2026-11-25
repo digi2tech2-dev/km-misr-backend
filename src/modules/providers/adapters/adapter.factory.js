@@ -178,6 +178,8 @@ const registry = new Map([
 
     // -- Dealer API ------------------------------------------------------------
     ['dealer-api', DealerApiAdapter],
+    ['coin-recharge', DealerApiAdapter],
+    ['bulala', DealerApiAdapter],
     ['dealer api', DealerApiAdapter],
     ['dealerapi', DealerApiAdapter],
     ['dealer', DealerApiAdapter],
