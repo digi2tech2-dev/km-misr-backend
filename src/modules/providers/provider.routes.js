@@ -172,4 +172,13 @@ router.patch(
     controller.updatePublishedProduct
 );
 
+const bulala = require('./bulalaSettings.service');
+const catchAsync = require('../../shared/utils/catchAsync');
+const { sendSuccess } = require('../../shared/utils/apiResponse');
+router.get('/:id/coin-settings', providerIdParamValidation, validate, catchAsync(async (req, res) => {
+    sendSuccess(res, { settings: await bulala.getSettings(req.params.id) });
+}));
+router.put('/:id/coin-settings', requirePermission('MANAGE_PRODUCTS'), providerIdParamValidation, validate, catchAsync(async (req, res) => {
+    sendSuccess(res, await bulala.saveSettings(req.params.id, req.body, req.user._id || req.user.id));
+}));
 module.exports = router;

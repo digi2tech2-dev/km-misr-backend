@@ -283,6 +283,8 @@ const orderSchema = new mongoose.Schema(
          * ('Pending', 'Completed', 'Cancelled').
          * Mapped to ORDER_STATUS separately.
          */
+        dealerSaleAttemptedAt: { type: Date, default: null },
+
         providerStatus: {
             type: String,
             default: null,

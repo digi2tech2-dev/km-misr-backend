@@ -487,6 +487,18 @@ const _attemptCreateOrder = async (
         }
 
         // ── 2. Validate Quantity Bounds ────────────────────────────────────────
+        if (product.providerProduct) {
+            const { ProviderProduct } = require('../providers/providerProduct.model');
+            const pp = await ProviderProduct.findById(product.providerProduct).session(session);
+            if (pp?.externalProductId === 'ibulala_dynamic_coins') {
+                const s = pp.adminSettings;
+                const q = Number(quantity);
+                if (!s || !pp.isActive || !product.provider || String(pp.provider) !== String(product.provider)
+                    || !/^\d+$/.test(String(quantity ?? '')) || !Number.isSafeInteger(q) || q < s.minQty || q > s.maxQty) {
+                    throw new BusinessRuleError('Bulala is unconfigured or quantity is outside configured bounds.', 'QUANTITY_OUT_OF_RANGE');
+                }
+            }
+        }
         const qty = parseInt(quantity, 10);
         if (qty < product.minQty || qty > product.maxQty) {
             throw new BusinessRuleError(
@@ -534,6 +546,10 @@ const _attemptCreateOrder = async (
             customerInput = { values: orderFieldsValues, fieldsSnapshot: [] };
         }
 
+        if (product.bulalaDynamicKey) {
+            await require('../providers/bulalaSettings.service').verifyCheckoutTarget(product, customerInput?.values, session);
+        }
+
         // ── 2c. JIT Provider Price Verification ────────────────────────────────
         //
         // If this product is linked to a provider, verify the provider's live
@@ -548,7 +564,7 @@ const _attemptCreateOrder = async (
         // block legitimate orders.
         //
         const priceOverride = await require('../users/userProductVisibility.service').getOverride(userId, product._id, session);
-        if (product.provider && product.providerProduct && provider) {
+        if (product.provider && product.providerProduct && provider && !product.bulalaDynamicKey) {
             try {
                 // Look up the externalProductId from the linked ProviderProduct
                 const ppDoc = await ProviderProduct.findById(product.providerProduct)

@@ -121,6 +121,10 @@ const normalizeDealerDynamicProduct = (product) => {
     const plain = normalizeProviderProductPrices(product);
     const dynamicProduct = getDealerDynamicProductById(plain?.externalProductId);
 
+    if (plain?.externalProductId === 'ibulala_dynamic_coins') {
+        if (!require('./bulalaSettings.service').isBulala(plain.provider)) return plain;
+        return { ...plain, ...require('./bulalaSettings.service').configuredDto(plain) };
+    }
     if (!dynamicProduct) return plain;
 
     return buildNormalizedDynamicProduct(plain, dynamicProduct);
@@ -138,7 +142,7 @@ const ensureDynamicProduct = async (providerId, resolveDynamicApp) => {
     if (!providerId) return null;
 
     const provider = await Provider.findById(providerId)
-        .select('name slug code providerCode isActive')
+        .select('name slug code providerCode isActive adapterType')
         .lean();
 
     if (!provider) return null;
@@ -146,6 +150,12 @@ const ensureDynamicProduct = async (providerId, resolveDynamicApp) => {
     const dynamicApp = resolveDynamicApp(provider);
     if (!dynamicApp) return null;
 
+    if (dynamicApp.key === 'ibulala') {
+        const existing = await ProviderProduct.findOne({ provider: provider._id, externalProductId: 'ibulala_dynamic_coins' });
+        if (existing) return existing;
+        return ProviderProduct.findOneAndUpdate({ provider: provider._id, externalProductId: 'ibulala_dynamic_coins' },
+            { $setOnInsert: require('./bulalaSettings.service').configuredDto(null) }, { upsert: true, new: true });
+    }
     const dto = buildDealerDynamicProductDto(dynamicApp);
     const now = new Date();
 
@@ -215,7 +225,7 @@ const listProviderProducts = async (filter = {}, { page = 1, limit = 500, search
 
     if (sortByPrice) {
         const Decimal = require('decimal.js');
-        const rows = await ProviderProduct.find(query).select('provider externalProductId rawName translatedName rawPrice minQty maxQty isActive').populate('provider', 'name slug isActive').lean();
+        const rows = await ProviderProduct.find(query).select('provider externalProductId rawName translatedName rawPrice minQty maxQty isActive adminSettings').populate('provider', 'name slug isActive').lean();
         const active = rows.filter((row) => row.provider && row.provider.isActive !== false);
         const price = (row) => { try { const value = new Decimal(String(row.rawPrice)); return value.isFinite() && value.gt(0) ? value : null; } catch { return null; } };
         active.sort((a, b) => {

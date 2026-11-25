@@ -48,6 +48,15 @@ const providerProductSchema = new mongoose.Schema(
          * Displayed in the admin product-selection UI.
          * Never overwritten by syncs.
          */
+        adminSettings: {
+            type: new mongoose.Schema({
+                name: { type: String, required: true },
+                unitCost: { type: String, required: true },
+                minQty: { type: Number, required: true },
+                maxQty: { type: Number, required: true },
+            }, { _id: false }),
+            default: undefined,
+        },
         translatedName: {
             type: String,
             trim: true,

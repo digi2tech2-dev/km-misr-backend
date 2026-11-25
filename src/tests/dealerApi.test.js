@@ -4,6 +4,8 @@ jest.mock('axios', () => ({
     create: jest.fn(),
 }));
 
+jest.mock('../modules/providers/providerProduct.model', () => ({ ProviderProduct: { findOne: jest.fn() } }));
+const { ProviderProduct } = require('../modules/providers/providerProduct.model');
 const axios = require('axios');
 const {
     DealerApiAdapter,
@@ -91,6 +93,21 @@ describe('normalizeProviderDecimalPrice', () => {
 });
 
 describe('DealerApiAdapter dynamic products', () => {
+    it.each(['karak', 'karak-chat', 'dealer-api'])('preserves legacy sale and polling behavior for %s', async slug => {
+        const { adapter, client } = makeAdapter({ slug });
+        client.post.mockResolvedValueOnce({ data: { code: 200 } });
+        const result = await adapter.placeOrder({ playerId: '12345', quantity: 50, referenceId: 'legacy' });
+        expect(result).toMatchObject({ success: true, providerOrderId: 'legacy', providerStatus: 'Completed' });
+        expect(client.post.mock.calls[0][2].params.toUserId).toBe(12345);
+        expect(await adapter.checkOrder('legacy')).toMatchObject({ providerStatus: 'Completed' });
+        for (const checked of await adapter.checkOrders(['1', '2'])) {
+            expect(checked.providerStatus).toBe('Completed');
+            expect(checked.requiresManualReview).toBeUndefined();
+        }
+        client.post.mockRejectedValueOnce(new Error('timeout'));
+        expect(await adapter.placeOrder({ playerId: '12345', quantity: 50 })).toMatchObject({ success: false, providerStatus: 'Cancelled' });
+        expect(ProviderProduct.findOne).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         axios.create.mockReset();
         axios.create.mockImplementation(() => makeFakeAxios());
@@ -127,13 +144,7 @@ describe('DealerApiAdapter dynamic products', () => {
 
         const products = await adapter.getProducts();
 
-        expect(products).toEqual([
-            expect.objectContaining(expectedDynamicProduct(
-                'ibulala_dynamic_coins',
-                'Ibulala Dynamic Coins (Any Amount)',
-                { price: '0.00000000001', maxQty: 500000000 }
-            )),
-        ]);
+        expect(products).toEqual([expect.objectContaining({ externalProductId: 'ibulala_dynamic_coins', rawPrice: '0', isActive: false })]);
         expect(client.get).not.toHaveBeenCalled();
     });
 
@@ -188,7 +199,8 @@ describe('DealerApiAdapter dynamic products', () => {
         });
     });
 
-    it('uses processSale successfully for the Ibulala dynamic product', async () => {
+    it('uses processSale successfully for the configured Ibulala dynamic product', async () => {
+        ProviderProduct.findOne.mockResolvedValueOnce({ isActive: true, adminSettings: { minQty: 1, maxQty: 2000 } });
         const { adapter, client } = makeAdapter({
             slug: 'ibulala-chat',
             name: 'Ibulala Chat',
@@ -207,7 +219,7 @@ describe('DealerApiAdapter dynamic products', () => {
         expect(client.post).toHaveBeenCalledWith('/dealer/sale', null, {
             params: {
                 secretKey: 'ibulala-secret',
-                toUserId: 98765,
+                toUserId: '98765',
                 coins: 1200,
             },
             headers: {

@@ -176,6 +176,12 @@ const normalizeRawPayloadPrices = (rawPayload) => {
  * @returns {Promise<{ doc: Document, isNew: boolean, rawPrice: string }>}
  */
 const _upsertOne = async (providerId, dto, now) => {
+    if (dto.externalProductId === 'ibulala_dynamic_coins') {
+        const { configuredDto } = require('./bulalaSettings.service');
+        const doc = await ProviderProduct.findOneAndUpdate({ provider: providerId, externalProductId: dto.externalProductId },
+            { $setOnInsert: configuredDto(null) }, { upsert: true, new: true });
+        return { doc, isNew: false, rawPrice: configuredDto(doc).rawPrice, adminOwned: true };
+    }
     const rawPrice = normalizeProviderDecimalPrice(
         dto.rawPrice
         ?? dto.providerPrice
@@ -268,8 +274,8 @@ const _performSync = async (provider, adapterOptions) => {
         const dto = dtos[i];
 
         if (settlement.status === 'fulfilled') {
-            const { doc, isNew, rawPrice } = settlement.value;
-            touchedProviderProducts.push({ id: doc._id, rawPrice });
+            const { doc, isNew, rawPrice, adminOwned } = settlement.value;
+            if (!adminOwned) touchedProviderProducts.push({ id: doc._id, rawPrice });
             if (isNew) upserted++;
             else updated++;
         } else {

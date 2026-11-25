@@ -9,6 +9,14 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 const PROVIDER_NAME = 'DealerApi';
 const SUCCESS_CODE = '200';
 
+// Bulala account IDs are identifiers, not quantities. Never round them via Number.
+const validateBulalaTargetId = (value) => {
+    if (typeof value === 'number' && !Number.isSafeInteger(value)) throw new Error('Invalid Bulala player ID');
+    const id = String(value ?? '');
+    if (!/^\d{1,50}$/.test(id) || BigInt(id) <= 0n) throw new Error('Invalid Bulala player ID');
+    return id;
+};
+
 const DEALER_DYNAMIC_APPS = Object.freeze([
     Object.freeze({
         key: 'karak',
@@ -24,7 +32,7 @@ const DEALER_DYNAMIC_APPS = Object.freeze([
     }),
     Object.freeze({
         key: 'ibulala',
-        providerKeys: Object.freeze(['ibulala', 'ibulala-chat', 'ibulala chat', 'ibulalachat']),
+        providerKeys: Object.freeze(['coin-recharge', 'bulala', 'ibulala', 'ibulala-chat', 'ibulala chat', 'ibulalachat']),
         product: Object.freeze({
             id: 'ibulala_dynamic_coins',
             name: 'Ibulala Dynamic Coins (Any Amount)',
@@ -241,6 +249,8 @@ class DealerApiAdapter extends BaseProviderAdapter {
      * @returns {Promise<{ uid: string, nickName: string, avatar: string|null, rawResponse: object }>}
      */
     async validateUser(userId) {
+        const isBulala = getDealerDynamicApp(this.provider)?.key === 'ibulala';
+        if (isBulala) userId = validateBulalaTargetId(userId);
         if (!userId) throw new Error(`[${PROVIDER_NAME}] userId is required`);
 
         const { data } = await this._client.get('/dealer/user-info', {
@@ -251,6 +261,13 @@ class DealerApiAdapter extends BaseProviderAdapter {
         });
 
         assertSuccess(data, 'validateUser');
+
+        if (isBulala) {
+            if (!data.data || typeof data.data !== 'object') throw new Error('Invalid Bulala user response');
+            const uid = validateBulalaTargetId(data.data.userId ?? data.data.uid ?? userId);
+            if (BigInt(uid) !== BigInt(userId)) throw new Error('Bulala returned a different player ID');
+            return { uid, nickName: String(data.data.nickName ?? ''), avatar: data.data.avatar ?? null };
+        }
 
         return {
             uid: String(data.data?.uid ?? userId),
@@ -273,11 +290,12 @@ class DealerApiAdapter extends BaseProviderAdapter {
     async processSale(params = {}) {
         const userId = extractTargetId(params);
         const coins = params.coins ?? params.amount ?? params.quantity;
-        const toUserId = Number(userId);
+        const isBulala = getDealerDynamicApp(this.provider)?.key === 'ibulala';
+        const toUserId = isBulala ? validateBulalaTargetId(userId) : Number(userId);
         const coinAmount = Number(coins);
 
         if (!userId) throw new Error(`[${PROVIDER_NAME}] userId is required`);
-        if (!Number.isFinite(toUserId) || toUserId <= 0) {
+        if (!isBulala && (!Number.isFinite(toUserId) || toUserId <= 0)) {
             throw new Error(`[${PROVIDER_NAME}] toUserId must be a positive number`);
         }
         if (!Number.isFinite(coinAmount) || coinAmount <= 0) {
@@ -304,11 +322,14 @@ class DealerApiAdapter extends BaseProviderAdapter {
     }
 
     async placeOrder(params = {}) {
+        const isBulala = getDealerDynamicApp(this.provider)?.key === 'ibulala';
+        let dispatched = false;
         try {
             const targetId = extractTargetId(params);
             if (!targetId) {
                 return {
                     success: false,
+                    ...(isBulala ? { definitePreSendFailure: true } : {}),
                     providerOrderId: null,
                     providerStatus: 'Cancelled',
                     unifiedStatus: this.toUnifiedStatus('Cancelled'),
@@ -335,19 +356,38 @@ class DealerApiAdapter extends BaseProviderAdapter {
                     coins: params.coins ?? params.amount ?? params.quantity,
                 };
 
+            if (isBulala) {
+                const { ProviderProduct } = require('../providerProduct.model');
+                const pp = await ProviderProduct.findOne({ provider: this.provider._id, externalProductId: 'ibulala_dynamic_coins' });
+                const s = pp?.adminSettings;
+                if (!isDealerDynamicProduct || !s || !pp.isActive || !/^\d+$/.test(String(params.quantity ?? '')) || !Number.isSafeInteger(saleParams.coins)
+                    || saleParams.coins < s.minQty || saleParams.coins > s.maxQty) {
+                    throw new Error('Bulala product is unconfigured or quantity is outside configured bounds');
+                }
+            }
+            if (isBulala) validateBulalaTargetId(targetId);
+            dispatched = true;
             const sale = await this.processSale(saleParams);
 
             return {
                 success: true,
-                providerOrderId: params.referenceId ?? null,
+                providerOrderId: isBulala ? null : (params.referenceId ?? null),
                 providerStatus: 'Completed',
                 unifiedStatus: this.toUnifiedStatus('Completed'),
-                rawResponse: sale.rawResponse,
+                rawResponse: isBulala ? { code: sale.rawResponse.code } : sale.rawResponse,
                 errorMessage: null,
             };
         } catch (err) {
+            // Bulala documents no idempotency/status lookup: every non-success
+            // after invocation requires reconciliation, including codes 131/138.
+            if (isBulala && dispatched) {
+                return { success: true, providerOrderId: null, providerStatus: 'PLACEMENT_UNCERTAIN',
+                    requiresManualReview: true, rawResponse: { placement: 'uncertain', code: err.code ?? null },
+                    errorMessage: 'Provider outcome requires manual verification' };
+            }
             return {
                 success: false,
+                ...(isBulala && !dispatched ? { definitePreSendFailure: true } : {}),
                 providerOrderId: null,
                 providerStatus: 'Cancelled',
                 unifiedStatus: this.toUnifiedStatus('Cancelled'),
@@ -388,6 +428,12 @@ class DealerApiAdapter extends BaseProviderAdapter {
     async getProducts() {
         const dynamicApp = getDealerDynamicApp(this.provider);
 
+        if (dynamicApp?.key === 'ibulala') {
+            const { ProviderProduct } = require('../providerProduct.model');
+            const { configuredDto } = require('../bulalaSettings.service');
+            const pp = this.provider._id ? await ProviderProduct.findOne({ provider: this.provider._id, externalProductId: 'ibulala_dynamic_coins' }) : null;
+            return [configuredDto(pp)];
+        }
         if (dynamicApp) {
             return [buildDealerDynamicProductDto(dynamicApp)];
         }
@@ -396,21 +442,18 @@ class DealerApiAdapter extends BaseProviderAdapter {
     }
 
     async checkOrder(orderId) {
+        const isBulala = getDealerDynamicApp(this.provider)?.key === 'ibulala';
         return {
             providerOrderId: String(orderId),
-            providerStatus: 'Completed',
-            unifiedStatus: this.toUnifiedStatus('Completed'),
+            providerStatus: isBulala ? 'Pending' : 'Completed',
+            unifiedStatus: this.toUnifiedStatus(isBulala ? 'Pending' : 'Completed'),
+            ...(isBulala ? { requiresManualReview: true } : {}),
             rawResponse: null,
         };
     }
 
     async checkOrders(orderIds = []) {
-        return orderIds.map((orderId) => ({
-            providerOrderId: String(orderId),
-            providerStatus: 'Completed',
-            unifiedStatus: this.toUnifiedStatus('Completed'),
-            rawResponse: null,
-        }));
+        return Promise.all(orderIds.map((orderId) => this.checkOrder(orderId)));
     }
 }
 
